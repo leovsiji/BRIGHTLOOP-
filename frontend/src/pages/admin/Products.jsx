@@ -1,22 +1,25 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Package,
-  Plus,
-  Edit2,
-  Trash2,
-  Layers,
-  Eye
-} from 'lucide-react';
+import { Package, Plus, Edit2, Trash2, Eye } from 'lucide-react';
 import DataTable from '../../components/DataTable';
 import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import Input from '../../components/common/Input';
-import Select from '../../components/common/Select';
-import { productsApi } from '../../services/api';
+import { productsApi, getApiError } from '../../services/api';
 import { useNotification } from '../../context/NotificationContext';
 
+/**
+ * Admin Products page
+ *
+ * Connected to: GET/POST/PUT/DELETE /api/products/
+ *
+ * Backend Product model fields:
+ *   id, name, description, price, is_active, created_at
+ *
+ * Fields NOT in backend (rich mock data only — omitted from forms/table):
+ *   sku, type, costPrice, category, variants, totalSubscribers
+ */
 export const Products = () => {
   const { showNotification } = useNotification();
   const [products, setProducts] = useState([]);
@@ -25,31 +28,28 @@ export const Products = () => {
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
 
-  // Form state
+  // Form state — matches backend fields exactly
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    sku: '',
-    type: 'SaaS License',
-    sellingPrice: '',
-    costPrice: '',
-    status: 'Active',
-    category: 'Software'
+    price: '',
+    is_active: true
   });
+  const [formLoading, setFormLoading] = useState(false);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
       const data = await productsApi.getAll();
       setProducts(data);
-    } catch {
+    } catch (err) {
       showNotification({
         type: 'error',
         title: 'Fetch Failed',
-        message: 'Could not load products from the API.'
+        message: getApiError(err)
       });
     } finally {
       setLoading(false);
@@ -62,16 +62,7 @@ export const Products = () => {
 
   const handleOpenAdd = () => {
     setSelectedProduct(null);
-    setFormData({
-      name: '',
-      description: '',
-      sku: `PROD-${Math.floor(1000 + Math.random() * 9000)}`,
-      type: 'SaaS License',
-      sellingPrice: '',
-      costPrice: '',
-      status: 'Active',
-      category: 'Software'
-    });
+    setFormData({ name: '', description: '', price: '', is_active: true });
     setIsModalOpen(true);
   };
 
@@ -80,13 +71,9 @@ export const Products = () => {
     setSelectedProduct(prod);
     setFormData({
       name: prod.name,
-      description: prod.description,
-      sku: prod.sku,
-      type: prod.type,
-      sellingPrice: prod.sellingPrice,
-      costPrice: prod.costPrice,
-      status: prod.status,
-      category: prod.category || 'Software'
+      description: prod.description || '',
+      price: prod.price,
+      is_active: prod.is_active
     });
     setIsModalOpen(true);
   };
@@ -103,51 +90,38 @@ export const Products = () => {
   };
 
   const handleFormSubmit = async (e) => {
-    e.preventDefault();
-    if (!formData.name || !formData.sellingPrice) {
-      showNotification({
-        type: 'error',
-        title: 'Validation Error',
-        message: 'Product name and selling price are required.'
-      });
+    e?.preventDefault();
+    if (!formData.name.trim()) {
+      showNotification({ type: 'error', title: 'Validation', message: 'Product name is required.' });
+      return;
+    }
+    if (!formData.price || isNaN(parseFloat(formData.price)) || parseFloat(formData.price) <= 0) {
+      showNotification({ type: 'error', title: 'Validation', message: 'A valid price is required.' });
       return;
     }
 
+    const payload = {
+      name: formData.name.trim(),
+      description: formData.description.trim(),
+      price: parseFloat(formData.price).toFixed(2),
+      is_active: formData.is_active
+    };
+
+    setFormLoading(true);
     try {
       if (selectedProduct) {
-        await productsApi.update(selectedProduct.id, {
-          ...formData,
-          sellingPrice: parseFloat(formData.sellingPrice),
-          costPrice: parseFloat(formData.costPrice || 0)
-        });
-        showNotification({
-          type: 'success',
-          title: 'Product Updated',
-          message: `${formData.name} was successfully updated.`
-        });
+        await productsApi.update(selectedProduct.id, payload);
+        showNotification({ type: 'success', title: 'Product Updated', message: `${payload.name} saved.` });
       } else {
-        await productsApi.create({
-          ...formData,
-          sellingPrice: parseFloat(formData.sellingPrice),
-          costPrice: parseFloat(formData.costPrice || 0),
-          variants: [
-            { id: 'v-def', name: 'Default Tier', seats: 10, price: parseFloat(formData.sellingPrice) }
-          ]
-        });
-        showNotification({
-          type: 'success',
-          title: 'Product Created',
-          message: `${formData.name} has been added to the catalog.`
-        });
+        await productsApi.create(payload);
+        showNotification({ type: 'success', title: 'Product Created', message: `${payload.name} added to catalog.` });
       }
       setIsModalOpen(false);
       loadProducts();
-    } catch {
-      showNotification({
-        type: 'error',
-        title: 'Save Failed',
-        message: 'An error occurred while saving the product.'
-      });
+    } catch (err) {
+      showNotification({ type: 'error', title: 'Save Failed', message: getApiError(err) });
+    } finally {
+      setFormLoading(false);
     }
   };
 
@@ -155,19 +129,11 @@ export const Products = () => {
     if (!selectedProduct) return;
     try {
       await productsApi.delete(selectedProduct.id);
-      showNotification({
-        type: 'success',
-        title: 'Product Removed',
-        message: `${selectedProduct.name} has been deleted.`
-      });
+      showNotification({ type: 'success', title: 'Product Deleted', message: `${selectedProduct.name} removed.` });
       setIsDeleteOpen(false);
       loadProducts();
-    } catch {
-      showNotification({
-        type: 'error',
-        title: 'Delete Failed',
-        message: 'Could not delete product.'
-      });
+    } catch (err) {
+      showNotification({ type: 'error', title: 'Delete Failed', message: getApiError(err) });
     }
   };
 
@@ -176,77 +142,40 @@ export const Products = () => {
       header: 'Product Name',
       field: 'name',
       sortable: true,
-      render: (val, row) => (
+      render: (val) => (
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#FFF1C2]/60 flex items-center justify-center text-amber-800 font-semibold shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-[#FFF1C2]/60 flex items-center justify-center text-amber-800 shrink-0">
             <Package className="w-4 h-4" />
           </div>
-          <div>
-            <span className="font-semibold text-[#172033] block">{val}</span>
-            <span className="text-[11px] text-[#64748B] font-mono">{row.sku}</span>
-          </div>
+          <span className="font-semibold text-[#172033]">{val}</span>
         </div>
       )
     },
     {
-      header: 'Type',
-      field: 'type',
+      header: 'Price',
+      field: 'price',
       sortable: true,
       render: (val) => (
-        <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-[#FFFDF7] border border-[#EAECEF] text-[#172033]">
-          {val}
-        </span>
-      )
-    },
-    {
-      header: 'Selling Price',
-      field: 'sellingPrice',
-      sortable: true,
-      render: (val) => (
-        <span className="font-semibold text-[#172033] font-mono">
+        <span className="font-bold text-[#172033] font-mono">
           ${parseFloat(val).toFixed(2)}
-        </span>
-      )
-    },
-    {
-      header: 'Cost Price',
-      field: 'costPrice',
-      sortable: true,
-      render: (val) => (
-        <span className="text-slate-500 font-mono">
-          ${parseFloat(val).toFixed(2)}
-        </span>
-      )
-    },
-    {
-      header: 'Gross Margin',
-      key: 'margin',
-      render: (_, row) => {
-        const margin = row.sellingPrice > 0
-          ? Math.round(((row.sellingPrice - (row.costPrice || 0)) / row.sellingPrice) * 100)
-          : 0;
-        return (
-          <span className="font-semibold text-emerald-600">
-            {margin}%
-          </span>
-        );
-      }
-    },
-    {
-      header: 'Subscribers',
-      field: 'totalSubscribers',
-      sortable: true,
-      render: (val) => (
-        <span className="font-medium text-[#172033]">
-          {(val || 0).toLocaleString()}
         </span>
       )
     },
     {
       header: 'Status',
-      field: 'status',
+      field: 'is_active',
       sortable: true,
-      render: (val) => <Badge status={val} size="sm" />
+      render: (val) => <Badge status={val ? 'active' : 'inactive'} size="sm" />
+    },
+    {
+      header: 'Created',
+      field: 'created_at',
+      sortable: true,
+      render: (val) => (
+        <span className="text-slate-500 text-[11px] font-mono">
+          {val ? new Date(val).toLocaleDateString() : '—'}
+        </span>
+      )
     },
     {
       header: 'Actions',
@@ -284,19 +213,12 @@ export const Products = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-[#172033] tracking-tight">
-            Products Catalog
-          </h2>
+          <h2 className="text-xl font-bold text-[#172033] tracking-tight">Products Catalog</h2>
           <p className="text-xs text-[#64748B]">
-            Configure software products, standalone licenses, APIs, and product variants
+            Manage software products and pricing available for subscription
           </p>
         </div>
-
-        <Button
-          variant="primary"
-          iconLeft={Plus}
-          onClick={handleOpenAdd}
-        >
+        <Button variant="primary" iconLeft={Plus} onClick={handleOpenAdd}>
           Add Product
         </Button>
       </div>
@@ -305,26 +227,27 @@ export const Products = () => {
         columns={columns}
         data={products}
         isLoading={loading}
-        searchPlaceholder="Search product by name, SKU or type..."
+        searchPlaceholder="Search products by name..."
         onRowClick={handleViewDetail}
         filterOptions={[
-          { label: 'Active', value: 'Active' },
-          { label: 'Inactive', value: 'Inactive' }
+          { label: 'Active', value: true },
+          { label: 'Inactive', value: false }
         ]}
+        filterKey="is_active"
       />
 
-      {/* Add / Edit Product Modal */}
+      {/* Add / Edit Modal */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={selectedProduct ? 'Edit Product' : 'Add New Product'}
-        description="Enter product details, pricing tiers, and inventory categorization."
+        description="All fields map directly to the backend Product model."
         footer={
           <>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" onClick={() => setIsModalOpen(false)} disabled={formLoading}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={handleFormSubmit}>
+            <Button variant="primary" onClick={handleFormSubmit} isLoading={formLoading}>
               {selectedProduct ? 'Save Changes' : 'Create Product'}
             </Button>
           </>
@@ -339,101 +262,58 @@ export const Products = () => {
             required
           />
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input
-              label="SKU Code"
-              placeholder="e.g. BC-ENT-01"
-              value={formData.sku}
-              onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-              required
-            />
-
-            <Select
-              label="Product Type"
-              value={formData.type}
-              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-              options={[
-                'SaaS License',
-                'Digital Service',
-                'API Access',
-                'Support Service',
-                'Cloud Add-on'
-              ]}
-              required
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input
-              label="Selling Price (USD)"
-              type="number"
-              step="0.01"
-              placeholder="199.00"
-              value={formData.sellingPrice}
-              onChange={(e) => setFormData({ ...formData, sellingPrice: e.target.value })}
-              required
-            />
-
-            <Input
-              label="Cost Price (USD)"
-              type="number"
-              step="0.01"
-              placeholder="65.00"
-              value={formData.costPrice}
-              onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Select
-              label="Status"
-              value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-              options={['Active', 'Inactive']}
-            />
-            <Input
-              label="Category"
-              placeholder="e.g. Cloud Services"
-              value={formData.category}
-              onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-            />
-          </div>
+          <Input
+            label="Price (USD)"
+            type="number"
+            step="0.01"
+            min="0.01"
+            placeholder="199.00"
+            value={formData.price}
+            onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+            required
+          />
 
           <div>
-            <label className="block text-xs font-medium text-[#172033] mb-1.5">
-              Description
-            </label>
+            <label className="block text-xs font-medium text-[#172033] mb-1.5">Description</label>
             <textarea
               rows={3}
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="Brief overview of software benefits, entitlements and usage limits..."
+              placeholder="Brief overview of the product..."
               className="w-full rounded-lg border border-[#EAECEF] bg-white px-3 py-2 text-sm text-[#172033] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#FBBF24]/50 focus:border-[#FBBF24]"
             />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${formData.is_active ? 'bg-emerald-500' : 'bg-slate-200'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${formData.is_active ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+            <span className="text-xs text-[#172033]">
+              {formData.is_active ? 'Active — visible to customers' : 'Inactive — hidden from customers'}
+            </span>
           </div>
         </form>
       </Modal>
 
-      {/* Product Detail Drawer / Modal */}
+      {/* Detail Modal */}
       {selectedProduct && (
         <Modal
           isOpen={isDetailOpen}
           onClose={() => setIsDetailOpen(false)}
           title={selectedProduct.name}
-          description={`SKU: ${selectedProduct.sku} • Category: ${selectedProduct.category || 'Software'}`}
+          description={`Product ID: ${selectedProduct.id}`}
           size="lg"
           footer={
             <>
-              <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
-                Close
-              </Button>
+              <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
               <Button
                 variant="primary"
                 iconLeft={Edit2}
-                onClick={(e) => {
-                  setIsDetailOpen(false);
-                  handleOpenEdit(selectedProduct, e);
-                }}
+                onClick={(e) => { setIsDetailOpen(false); handleOpenEdit(selectedProduct, e); }}
               >
                 Edit Product
               </Button>
@@ -442,55 +322,26 @@ export const Products = () => {
         >
           <div className="space-y-5 text-xs">
             <p className="text-[#64748B] text-sm leading-relaxed">
-              {selectedProduct.description}
+              {selectedProduct.description || 'No description provided.'}
             </p>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#FFFDF7] p-4 rounded-xl border border-[#EAECEF]">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-[#FFFDF7] p-4 rounded-xl border border-[#EAECEF]">
               <div>
-                <span className="text-[#64748B] block mb-0.5">Selling Price</span>
+                <span className="text-[#64748B] block mb-0.5">Price</span>
                 <span className="text-base font-bold text-[#172033] font-mono">
-                  ${selectedProduct.sellingPrice?.toFixed(2)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[#64748B] block mb-0.5">Cost Price</span>
-                <span className="text-base font-bold text-slate-500 font-mono">
-                  ${selectedProduct.costPrice?.toFixed(2)}
-                </span>
-              </div>
-              <div>
-                <span className="text-[#64748B] block mb-0.5">Active Subscribers</span>
-                <span className="text-base font-bold text-[#172033]">
-                  {selectedProduct.totalSubscribers?.toLocaleString()}
+                  ${parseFloat(selectedProduct.price).toFixed(2)}
                 </span>
               </div>
               <div>
                 <span className="text-[#64748B] block mb-0.5">Status</span>
-                <Badge status={selectedProduct.status} size="sm" />
+                <Badge status={selectedProduct.is_active ? 'active' : 'inactive'} size="sm" />
               </div>
-            </div>
-
-            {/* Product Variants List */}
-            <div>
-              <h4 className="font-semibold text-[#172033] mb-2 flex items-center gap-1.5">
-                <Layers className="w-4 h-4 text-amber-600" />
-                <span>Configured Product Variants</span>
-              </h4>
-              <div className="space-y-2">
-                {(selectedProduct.variants || []).map((v) => (
-                  <div
-                    key={v.id}
-                    className="p-3 bg-white border border-[#EAECEF] rounded-lg flex items-center justify-between"
-                  >
-                    <div>
-                      <span className="font-medium text-[#172033]">{v.name}</span>
-                      <span className="text-slate-400 ml-2">({v.seats} seats / capacity)</span>
-                    </div>
-                    <span className="font-bold text-[#172033] font-mono">
-                      ${v.price?.toFixed(2)}
-                    </span>
-                  </div>
-                ))}
+              <div>
+                <span className="text-[#64748B] block mb-0.5">Created</span>
+                <span className="font-semibold text-[#172033] font-mono">
+                  {selectedProduct.created_at
+                    ? new Date(selectedProduct.created_at).toLocaleDateString()
+                    : '—'}
+                </span>
               </div>
             </div>
           </div>
@@ -503,9 +354,9 @@ export const Products = () => {
         onClose={() => setIsDeleteOpen(false)}
         onConfirm={handleDeleteConfirm}
         title="Delete Product"
-        message={`Are you sure you want to delete "${selectedProduct?.name}"? Any active subscriptions tied to this product will be flagged.`}
+        message={`Delete "${selectedProduct?.name}"? Active subscriptions tied to this product may be affected.`}
         confirmText="Delete Product"
-        isDanger={true}
+        isDanger
       />
     </div>
   );

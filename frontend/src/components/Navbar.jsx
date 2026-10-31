@@ -66,11 +66,10 @@ export const Navbar = ({ onToggleSidebar, title = 'Dashboard' }) => {
                 switchRole('admin');
                 navigate('/admin');
               }}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer ${
-                role === 'admin'
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer ${role === 'admin'
                   ? 'bg-[#FBBF24] text-[#172033] shadow-xs font-semibold'
                   : 'text-[#64748B] hover:text-[#172033]'
-              }`}
+                }`}
               title="Switch to Admin Interface"
             >
               <Shield className="w-3.5 h-3.5" />
@@ -81,11 +80,10 @@ export const Navbar = ({ onToggleSidebar, title = 'Dashboard' }) => {
                 switchRole('customer');
                 navigate('/customer');
               }}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer ${
-                role === 'customer'
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer ${role === 'customer'
                   ? 'bg-[#FBBF24] text-[#172033] shadow-xs font-semibold'
                   : 'text-[#64748B] hover:text-[#172033]'
-              }`}
+                }`}
               title="Switch to Customer Interface"
             >
               <User className="w-3.5 h-3.5" />

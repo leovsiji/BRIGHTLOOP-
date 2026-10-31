@@ -1,18 +1,19 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, ArrowRight, Shield, User } from 'lucide-react';
+import { Mail, Lock, ArrowRight } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Input from '../../components/common/Input';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
+import { getApiError } from '../../services/api';
 
 export const Login = () => {
   const { login } = useAuth();
   const { showNotification } = useNotification();
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState('admin@brightloop.com');
-  const [password, setPassword] = useState('••••••••••••');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -22,37 +23,17 @@ export const Login = () => {
       const user = await login({ email, password });
       showNotification({
         type: 'success',
-        title: 'Authentication Successful',
-        message: `Welcome back, ${user.name}!`
+        title: 'Welcome back!',
+        message: `Signed in as ${user.first_name || user.email}.`
       });
-      if (user.role === 'admin') {
-        navigate('/admin');
-      } else {
-        navigate('/customer');
-      }
-    } catch {
+      // Customers go to /customer; admin/staff go to /customer (they use /admin/login)
+      navigate('/customer');
+    } catch (err) {
       showNotification({
         type: 'error',
         title: 'Login Failed',
-        message: 'Invalid credentials. Please verify and try again.'
+        message: getApiError(err)
       });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDemoLogin = async (role) => {
-    setLoading(true);
-    try {
-      const demoEmail = role === 'admin' ? 'admin@brightloop.com' : 'sarah.jenkins@acmecorp.io';
-      setEmail(demoEmail);
-      const user = await login({ email: demoEmail, password: 'password123' });
-      showNotification({
-        type: 'success',
-        title: `Logged In as ${role === 'admin' ? 'Administrator' : 'Customer'}`,
-        message: `Session initialized for ${user.name}.`
-      });
-      navigate(role === 'admin' ? '/admin' : '/customer');
     } finally {
       setLoading(false);
     }
@@ -65,40 +46,15 @@ export const Login = () => {
           Sign In to Your Account
         </h2>
         <p className="text-xs text-[#64748B] mt-0.5">
-          Access your management console or customer billing dashboard
+          Access your BRIGHTLOOP customer portal
         </p>
-      </div>
-
-      {/* Demo Credentials Quick-Switch Pills */}
-      <div className="p-3 bg-[#FFFDF7] rounded-xl border border-amber-200/60 space-y-2">
-        <span className="text-[10px] font-semibold text-amber-900 uppercase tracking-wider block">
-          Quick Demo Credentials
-        </span>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => handleDemoLogin('admin')}
-            className="flex items-center justify-center gap-1.5 p-2 rounded-lg bg-white border border-[#EAECEF] hover:border-amber-300 text-xs font-semibold text-[#172033] shadow-2xs hover:bg-[#FFF1C2]/30 transition-colors cursor-pointer"
-          >
-            <Shield className="w-3.5 h-3.5 text-amber-600" />
-            <span>Admin Suite</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDemoLogin('customer')}
-            className="flex items-center justify-center gap-1.5 p-2 rounded-lg bg-white border border-[#EAECEF] hover:border-amber-300 text-xs font-semibold text-[#172033] shadow-2xs hover:bg-[#FFF1C2]/30 transition-colors cursor-pointer"
-          >
-            <User className="w-3.5 h-3.5 text-amber-600" />
-            <span>Customer Portal</span>
-          </button>
-        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
-          label="Work Email"
+          label="Email Address"
           type="email"
-          placeholder="name@company.com"
+          placeholder="you@company.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           icon={Mail}
@@ -127,18 +83,6 @@ export const Login = () => {
           />
         </div>
 
-        <div className="flex items-center">
-          <input
-            id="remember-me"
-            type="checkbox"
-            defaultChecked
-            className="w-4 h-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400 accent-amber-500"
-          />
-          <label htmlFor="remember-me" className="ml-2 block text-xs text-[#64748B]">
-            Keep me signed in on this workstation
-          </label>
-        </div>
-
         <Button
           type="submit"
           variant="primary"
@@ -152,9 +96,16 @@ export const Login = () => {
       </form>
 
       <div className="text-center text-xs text-[#64748B] pt-2 border-t border-[#EAECEF]">
-        Don't have an enterprise account?{' '}
+        Don't have an account?{' '}
         <Link to="/auth/register" className="font-semibold text-amber-700 hover:text-amber-800">
           Create an account
+        </Link>
+      </div>
+
+      <div className="text-center text-xs text-[#64748B]">
+        Are you an administrator?{' '}
+        <Link to="/admin/login" className="font-semibold text-amber-700 hover:text-amber-800">
+          Admin login →
         </Link>
       </div>
     </div>
@@ -162,4 +113,3 @@ export const Login = () => {
 };
 
 export default Login;
-

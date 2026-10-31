@@ -10,12 +10,15 @@ const BADGE_VARIANTS = {
   past_due: 'bg-orange-50 text-orange-800 border-orange-200',
   overdue: 'bg-rose-50 text-rose-700 border-rose-200',
   canceled: 'bg-slate-100 text-slate-600 border-slate-200',
+  cancelled: 'bg-slate-100 text-slate-600 border-slate-200', // backend uses double-l
+  expired: 'bg-slate-100 text-slate-600 border-slate-200',   // backend status
   failed: 'bg-rose-50 text-rose-700 border-rose-200',
   refunded: 'bg-purple-50 text-purple-700 border-purple-200',
   draft: 'bg-slate-100 text-slate-600 border-slate-200',
   suspended: 'bg-rose-50 text-rose-700 border-rose-200',
   archived: 'bg-slate-100 text-slate-600 border-slate-200',
   paused: 'bg-amber-50 text-amber-800 border-amber-200',
+  inactive: 'bg-slate-100 text-slate-500 border-slate-200', // product is_active=false
   default: 'bg-slate-50 text-slate-700 border-[#EAECEF]'
 };
 

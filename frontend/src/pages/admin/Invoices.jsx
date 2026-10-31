@@ -1,33 +1,44 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Download,
-  Printer,
-  Eye
-} from 'lucide-react';
+import { Eye, CreditCard } from 'lucide-react';
 import DataTable from '../../components/DataTable';
 import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
-import { invoicesApi } from '../../services/api';
+import { invoicesApi, getApiError } from '../../services/api';
 import { useNotification } from '../../context/NotificationContext';
 
+/**
+ * Admin Invoices page
+ *
+ * Connected to: GET /api/billing/invoices/ and POST /api/billing/invoices/{id}/pay/
+ *
+ * Backend Invoice model fields:
+ *   id, user (id), subscription (id), amount, status, issued_at, paid_at
+ *
+ * Status values (lowercase): pending | paid | failed
+ *
+ * Fields NOT in backend (removed from UI):
+ *   invoiceNumber, customerName, customerCompany, dueDate, items, taxAmount, taxRate, subtotal
+ */
 export const Invoices = () => {
   const { showNotification } = useNotification();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isPayOpen, setIsPayOpen] = useState(false);
+  const [paying, setPaying] = useState(false);
 
   const loadInvoices = useCallback(async () => {
     setLoading(true);
     try {
       const data = await invoicesApi.getAll();
       setInvoices(data);
-    } catch {
+    } catch (err) {
       showNotification({
         type: 'error',
         title: 'Error Loading Invoices',
-        message: 'Could not fetch invoices from billing service.'
+        message: getApiError(err)
       });
     } finally {
       setLoading(false);
@@ -43,52 +54,50 @@ export const Invoices = () => {
     setIsDetailOpen(true);
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handlePayClick = (inv, e) => {
+    e?.stopPropagation();
+    setSelectedInvoice(inv);
+    setIsPayOpen(true);
   };
 
-  const handleDownload = (inv, e) => {
-    e?.stopPropagation();
-    showNotification({
-      type: 'success',
-      title: 'Invoice PDF Download',
-      message: `Generating digital receipt for ${inv.invoiceNumber}...`
-    });
+  const handleConfirmPay = async () => {
+    if (!selectedInvoice) return;
+    setPaying(true);
+    try {
+      await invoicesApi.pay(selectedInvoice.id);
+      showNotification({
+        type: 'success',
+        title: 'Invoice Marked Paid',
+        message: `Invoice #${selectedInvoice.id} ($${parseFloat(selectedInvoice.amount).toFixed(2)}) marked as paid.`
+      });
+      setIsPayOpen(false);
+      loadInvoices();
+    } catch (err) {
+      showNotification({ type: 'error', title: 'Payment Error', message: getApiError(err) });
+    } finally {
+      setPaying(false);
+    }
   };
 
   const columns = [
     {
-      header: 'Invoice Number',
-      field: 'invoiceNumber',
+      header: 'Invoice ID',
+      field: 'id',
       sortable: true,
       render: (val) => (
-        <span className="font-semibold text-[#172033] font-mono">
-          {val}
-        </span>
+        <span className="font-semibold text-[#172033] font-mono">INV-{String(val).padStart(6, '0')}</span>
       )
     },
     {
-      header: 'Customer',
-      field: 'customerName',
+      header: 'User / Subscription',
+      field: 'user',
       sortable: true,
       render: (val, row) => (
         <div>
-          <span className="font-medium text-[#172033] block">{val}</span>
-          <span className="text-[11px] text-[#64748B]">{row.customerCompany}</span>
+          <span className="font-medium text-[#172033] block">User #{val}</span>
+          <span className="text-[11px] text-slate-500">Sub #{row.subscription}</span>
         </div>
       )
-    },
-    {
-      header: 'Issue Date',
-      field: 'issueDate',
-      sortable: true,
-      render: (val) => <span className="text-slate-600 font-mono text-[11px]">{val}</span>
-    },
-    {
-      header: 'Due Date',
-      field: 'dueDate',
-      sortable: true,
-      render: (val) => <span className="text-slate-600 font-mono text-[11px]">{val}</span>
     },
     {
       header: 'Amount',
@@ -96,7 +105,27 @@ export const Invoices = () => {
       sortable: true,
       render: (val) => (
         <span className="font-bold text-[#172033] font-mono">
-          ${val?.toFixed(2)}
+          ${parseFloat(val).toFixed(2)}
+        </span>
+      )
+    },
+    {
+      header: 'Issued At',
+      field: 'issued_at',
+      sortable: true,
+      render: (val) => (
+        <span className="text-slate-500 font-mono text-[11px]">
+          {val ? new Date(val).toLocaleDateString() : '—'}
+        </span>
+      )
+    },
+    {
+      header: 'Paid At',
+      field: 'paid_at',
+      sortable: true,
+      render: (val) => (
+        <span className="text-slate-500 font-mono text-[11px]">
+          {val ? new Date(val).toLocaleDateString() : '—'}
         </span>
       )
     },
@@ -115,17 +144,19 @@ export const Invoices = () => {
           <button
             onClick={() => handleViewInvoice(row)}
             className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-            title="Inspect Invoice"
+            title="View Invoice"
           >
             <Eye className="w-4 h-4" />
           </button>
-          <button
-            onClick={(e) => handleDownload(row, e)}
-            className="p-1 rounded text-slate-400 hover:text-amber-700 hover:bg-amber-50"
-            title="Download PDF"
-          >
-            <Download className="w-4 h-4" />
-          </button>
+          {row.status === 'pending' && (
+            <button
+              onClick={(e) => handlePayClick(row, e)}
+              className="p-1 rounded text-slate-400 hover:text-emerald-700 hover:bg-emerald-50"
+              title="Mark as Paid"
+            >
+              <CreditCard className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )
     }
@@ -139,7 +170,7 @@ export const Invoices = () => {
             Invoices & Billing History
           </h2>
           <p className="text-xs text-[#64748B]">
-            Automated recurrent invoices, tax assessments, and collection statuses
+            All subscription billing records across customers
           </p>
         </div>
       </div>
@@ -149,158 +180,95 @@ export const Invoices = () => {
         data={invoices}
         isLoading={loading}
         onRowClick={handleViewInvoice}
-        searchPlaceholder="Search invoice #, customer or company..."
+        searchPlaceholder="Search by invoice ID, user or subscription..."
         filterOptions={[
-          { label: 'Paid', value: 'Paid' },
-          { label: 'Pending', value: 'Pending' },
-          { label: 'Overdue', value: 'Overdue' },
-          { label: 'Draft', value: 'Draft' }
+          { label: 'Pending', value: 'pending' },
+          { label: 'Paid', value: 'paid' },
+          { label: 'Failed', value: 'failed' }
         ]}
       />
 
-      {/* Printable Invoice Modal */}
+      {/* Invoice Detail Modal */}
       {selectedInvoice && (
         <Modal
           isOpen={isDetailOpen}
           onClose={() => setIsDetailOpen(false)}
-          title={`Invoice ${selectedInvoice.invoiceNumber}`}
-          description={`Issued to ${selectedInvoice.customerName} on ${selectedInvoice.issueDate}`}
-          size="xl"
+          title={`Invoice INV-${String(selectedInvoice.id).padStart(6, '0')}`}
+          description={`Issued: ${selectedInvoice.issued_at ? new Date(selectedInvoice.issued_at).toLocaleString() : '—'}`}
+          size="lg"
           footer={
             <>
-              <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
-                Close
-              </Button>
-              <Button
-                variant="outline"
-                iconLeft={Printer}
-                onClick={handlePrint}
-              >
-                Print Invoice
-              </Button>
-              <Button
-                variant="primary"
-                iconLeft={Download}
-                onClick={(e) => handleDownload(selectedInvoice, e)}
-              >
-                Download PDF
+              <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
+              {selectedInvoice.status === 'pending' && (
+                <Button
+                  variant="primary"
+                  iconLeft={CreditCard}
+                  onClick={() => { setIsDetailOpen(false); setIsPayOpen(true); }}
+                >
+                  Mark as Paid
+                </Button>
+              )}
+            </>
+          }
+        >
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-[#FFFDF7] p-4 rounded-xl border border-[#EAECEF]">
+              <div>
+                <span className="text-[#64748B] block mb-0.5">Amount</span>
+                <span className="text-xl font-extrabold text-[#172033] font-mono">
+                  ${parseFloat(selectedInvoice.amount).toFixed(2)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#64748B] block mb-0.5">Status</span>
+                <Badge status={selectedInvoice.status} size="md" />
+              </div>
+              <div>
+                <span className="text-[#64748B] block mb-0.5">User ID</span>
+                <span className="font-semibold text-[#172033] font-mono">#{selectedInvoice.user}</span>
+              </div>
+              <div>
+                <span className="text-[#64748B] block mb-0.5">Subscription ID</span>
+                <span className="font-semibold text-[#172033] font-mono">#{selectedInvoice.subscription}</span>
+              </div>
+              <div>
+                <span className="text-[#64748B] block mb-0.5">Issued At</span>
+                <span className="font-semibold text-[#172033] font-mono">
+                  {selectedInvoice.issued_at ? new Date(selectedInvoice.issued_at).toLocaleString() : '—'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#64748B] block mb-0.5">Paid At</span>
+                <span className={`font-semibold font-mono ${selectedInvoice.paid_at ? 'text-emerald-600' : 'text-slate-400'}`}>
+                  {selectedInvoice.paid_at ? new Date(selectedInvoice.paid_at).toLocaleString() : 'Not paid'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Pay Confirmation */}
+      {selectedInvoice && (
+        <Modal
+          isOpen={isPayOpen}
+          onClose={() => setIsPayOpen(false)}
+          title="Mark Invoice as Paid"
+          description={`INV-${String(selectedInvoice.id).padStart(6, '0')} — $${parseFloat(selectedInvoice.amount).toFixed(2)}`}
+          size="sm"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setIsPayOpen(false)} disabled={paying}>Cancel</Button>
+              <Button variant="primary" onClick={handleConfirmPay} isLoading={paying}>
+                Confirm Payment
               </Button>
             </>
           }
         >
-          <div className="p-6 bg-white border border-[#EAECEF] rounded-xl space-y-6 text-xs printable-content">
-            {/* Invoice Header */}
-            <div className="flex justify-between items-start border-b border-[#EAECEF] pb-6">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="w-7 h-7 rounded bg-[#FBBF24] flex items-center justify-center font-bold text-[#172033]">
-                    BL
-                  </div>
-                  <span className="text-base font-bold text-[#172033]">
-                    BRIGHT<span className="text-amber-500">LOOP</span> Inc.
-                  </span>
-                </div>
-                <p className="text-slate-500">500 Howard Street, Suite 400</p>
-                <p className="text-slate-500">San Francisco, CA 94105, USA</p>
-                <p className="text-slate-500 font-mono text-[11px] mt-1">Tax ID: US-EIN-94-3829104</p>
-              </div>
-
-              <div className="text-right">
-                <span className="text-xs uppercase tracking-wider font-semibold text-[#64748B] block">
-                  INVOICE
-                </span>
-                <span className="text-lg font-bold text-[#172033] font-mono">
-                  {selectedInvoice.invoiceNumber}
-                </span>
-                <div className="mt-2">
-                  <Badge status={selectedInvoice.status} size="sm" />
-                </div>
-              </div>
-            </div>
-
-            {/* Bill To & Details */}
-            <div className="grid grid-cols-2 gap-6 pb-6 border-b border-[#EAECEF]">
-              <div>
-                <span className="text-[#64748B] block font-semibold text-[11px] uppercase tracking-wider mb-1">
-                  Billed To
-                </span>
-                <p className="font-bold text-[#172033] text-sm">{selectedInvoice.customerName}</p>
-                <p className="text-slate-600">{selectedInvoice.customerCompany}</p>
-                <p className="text-slate-500">{selectedInvoice.customerEmail}</p>
-              </div>
-
-              <div className="space-y-1 text-right">
-                <div>
-                  <span className="text-slate-400">Issue Date: </span>
-                  <span className="font-semibold text-[#172033] font-mono">{selectedInvoice.issueDate}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400">Due Date: </span>
-                  <span className="font-semibold text-[#172033] font-mono">{selectedInvoice.dueDate}</span>
-                </div>
-                {selectedInvoice.paidAt && (
-                  <div>
-                    <span className="text-slate-400">Settled On: </span>
-                    <span className="font-semibold text-emerald-600 font-mono">{selectedInvoice.paidAt}</span>
-                  </div>
-                )}
-                <div>
-                  <span className="text-slate-400">Payment Method: </span>
-                  <span className="text-[#172033]">{selectedInvoice.paymentMethod}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Line Items Table */}
-            <div>
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-[#EAECEF] text-slate-400 text-[11px] uppercase font-semibold">
-                    <th className="py-2">Description</th>
-                    <th className="py-2 text-center">Qty</th>
-                    <th className="py-2 text-right">Unit Price</th>
-                    <th className="py-2 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#EAECEF]">
-                  {(selectedInvoice.items || []).map((item) => (
-                    <tr key={item.id}>
-                      <td className="py-3 font-medium text-[#172033]">
-                        {item.description}
-                      </td>
-                      <td className="py-3 text-center text-slate-600">{item.quantity}</td>
-                      <td className="py-3 text-right font-mono text-slate-600">${item.unitPrice?.toFixed(2)}</td>
-                      <td className="py-3 text-right font-mono font-semibold text-[#172033]">${item.amount?.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Calculations Breakdown */}
-            <div className="flex justify-end pt-4 border-t border-[#EAECEF]">
-              <div className="w-64 space-y-2">
-                <div className="flex justify-between text-slate-500">
-                  <span>Subtotal:</span>
-                  <span className="font-mono">${selectedInvoice.subtotal?.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-slate-500">
-                  <span>Tax ({selectedInvoice.taxRate || '10%'}):</span>
-                  <span className="font-mono">${selectedInvoice.taxAmount?.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm font-bold text-[#172033] pt-2 border-t border-[#EAECEF]">
-                  <span>Total Amount Due:</span>
-                  <span className="font-mono">${selectedInvoice.amount?.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Terms Footer */}
-            <div className="pt-4 border-t border-[#EAECEF] text-[11px] text-slate-400">
-              <p>Payment terms: Net 15 days. Unpaid balances subject to standard retry protocol.</p>
-              <p className="mt-0.5">Questions? Contact billing@brightloop.com</p>
-            </div>
-          </div>
+          <p className="text-xs text-[#64748B] leading-relaxed">
+            This will mark the invoice as paid and record the payment timestamp.
+            This action calls <code className="font-mono bg-slate-100 px-1 rounded">POST /api/billing/invoices/{selectedInvoice.id}/pay/</code>.
+          </p>
         </Modal>
       )}
     </div>

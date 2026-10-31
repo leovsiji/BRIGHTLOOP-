@@ -13,6 +13,7 @@ import AuthLayout from './layouts/AuthLayout';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
+import AdminLogin from './pages/admin/AdminLogin';
 
 // Admin Pages
 import AdminDashboard from './pages/admin/Dashboard';
@@ -39,8 +40,10 @@ import CustomerSupport from './pages/customer/CustomerSupport';
 import AccountSettings from './pages/customer/AccountSettings';
 
 const RootRedirect = () => {
-  const { role } = useAuth();
-  return <Navigate to={role === 'admin' ? '/admin' : '/customer'} replace />;
+  const { actualRole, isAuthenticated } = useAuth();
+  if (!isAuthenticated) return <Navigate to="/auth/login" replace />;
+  if (actualRole === 'admin' || actualRole === 'staff') return <Navigate to="/admin" replace />;
+  return <Navigate to="/customer" replace />;
 };
 
 export const App = () => {
@@ -59,6 +62,9 @@ export const App = () => {
               <Route path="register" element={<Register />} />
               <Route path="forgot-password" element={<ForgotPassword />} />
             </Route>
+
+            {/* Admin Login (standalone, no layout wrapper) */}
+            <Route path="/admin/login" element={<AdminLogin />} />
 
             {/* Admin Dashboard Routes */}
             <Route

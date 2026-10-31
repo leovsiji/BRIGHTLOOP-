@@ -5,6 +5,7 @@ import Button from '../../components/common/Button';
 import Input from '../../components/common/Input';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
+import { getApiError } from '../../services/api';
 
 export const Register = () => {
   const { register } = useAuth();
@@ -12,16 +13,20 @@ export const Register = () => {
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
-    name: '',
+    first_name: '',
+    last_name: '',
     email: '',
-    company: '',
+    company_name: '',
     password: '',
     confirmPassword: ''
   });
   const [loading, setLoading] = useState(false);
 
+  const set = (field) => (e) => setFormData((prev) => ({ ...prev, [field]: e.target.value }));
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     if (formData.password !== formData.confirmPassword) {
       showNotification({
         type: 'error',
@@ -31,20 +36,35 @@ export const Register = () => {
       return;
     }
 
-    setLoading(true);
-    try {
-      await register(formData);
-      showNotification({
-        type: 'success',
-        title: 'Registration Complete',
-        message: 'Your account is ready! Welcome to BRIGHTLOOP.'
-      });
-      navigate('/customer');
-    } catch {
+    if (formData.password.length < 9) {
       showNotification({
         type: 'error',
-        title: 'Registration Error',
-        message: 'Could not create account.'
+        title: 'Validation Error',
+        message: 'Password must be at least 9 characters.'
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await register({
+        email: formData.email,
+        password: formData.password,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        ...(formData.company_name ? { company_name: formData.company_name } : {})
+      });
+      showNotification({
+        type: 'success',
+        title: 'Account Created',
+        message: 'Your account is ready. Please sign in.'
+      });
+      navigate('/auth/login');
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Registration Failed',
+        message: getApiError(err)
       });
     } finally {
       setLoading(false);
@@ -55,49 +75,57 @@ export const Register = () => {
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-bold text-[#172033] tracking-tight">
-          Create Enterprise Account
+          Create Your Account
         </h2>
         <p className="text-xs text-[#64748B] mt-0.5">
-          Start your 14-day free trial on BRIGHTLOOP today
+          Start your BRIGHTLOOP subscription today
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Input
-          label="Your Full Name"
-          placeholder="Sarah Jenkins"
-          value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          icon={User}
-          required
-        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Input
+            label="First Name"
+            placeholder="Sarah"
+            value={formData.first_name}
+            onChange={set('first_name')}
+            icon={User}
+            required
+          />
+          <Input
+            label="Last Name"
+            placeholder="Jenkins"
+            value={formData.last_name}
+            onChange={set('last_name')}
+            required
+          />
+        </div>
 
         <Input
-          label="Company / Organization"
-          placeholder="Acme Corporation"
-          value={formData.company}
-          onChange={(e) => setFormData({ ...formData, company: e.target.value })}
-          icon={Building}
-          required
-        />
-
-        <Input
-          label="Work Email Address"
+          label="Work Email"
           type="email"
           placeholder="sarah@acmecorp.io"
           value={formData.email}
-          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+          onChange={set('email')}
           icon={Mail}
           required
+        />
+
+        <Input
+          label="Company (optional)"
+          placeholder="Acme Corporation"
+          value={formData.company_name}
+          onChange={set('company_name')}
+          icon={Building}
         />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input
             label="Password"
             type="password"
-            placeholder="Min. 8 characters"
+            placeholder="Min. 9 characters"
             value={formData.password}
-            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+            onChange={set('password')}
             icon={Lock}
             required
           />
@@ -106,7 +134,7 @@ export const Register = () => {
             type="password"
             placeholder="Repeat password"
             value={formData.confirmPassword}
-            onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+            onChange={set('confirmPassword')}
             icon={Lock}
             required
           />
@@ -117,11 +145,12 @@ export const Register = () => {
             id="terms"
             type="checkbox"
             required
-            defaultChecked
-            className="w-4 h-4 mt-0.5 rounded border-slate-300 text-amber-500 focus:ring-amber-400 accent-amber-500"
+            className="w-4 h-4 mt-0.5 rounded border-slate-300 accent-amber-500"
           />
           <label htmlFor="terms" className="ml-2 block text-xs text-[#64748B] leading-tight">
-            I agree to BRIGHTLOOP's <span className="text-[#172033] underline">Terms of Service</span> and <span className="text-[#172033] underline">Privacy Policy</span>.
+            I agree to BRIGHTLOOP's{' '}
+            <span className="text-[#172033] underline cursor-pointer">Terms of Service</span> and{' '}
+            <span className="text-[#172033] underline cursor-pointer">Privacy Policy</span>.
           </label>
         </div>
 
@@ -138,7 +167,7 @@ export const Register = () => {
       </form>
 
       <div className="text-center text-xs text-[#64748B] pt-2 border-t border-[#EAECEF]">
-        Already registered?{' '}
+        Already have an account?{' '}
         <Link to="/auth/login" className="font-semibold text-amber-700 hover:text-amber-800">
           Sign In
         </Link>

@@ -21,6 +21,61 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 // Set this to true to use mock data when Django backend is not running
 const ALWAYS_USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
 
+// ==========================================
+// TOKEN STORAGE HELPERS
+// ==========================================
+const TOKEN_KEY = 'brightloop_access';
+const REFRESH_KEY = 'brightloop_refresh';
+const USER_KEY = 'brightloop_user';
+
+export const tokenStorage = {
+  getAccess: () => localStorage.getItem(TOKEN_KEY),
+  getRefresh: () => localStorage.getItem(REFRESH_KEY),
+  getUser: () => {
+    try {
+      const raw = localStorage.getItem(USER_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+  set: (access, refresh, user) => {
+    if (access) localStorage.setItem(TOKEN_KEY, access);
+    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+  },
+  clear: () => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+    localStorage.removeItem(USER_KEY);
+    // Legacy key cleanup
+    localStorage.removeItem('brightloop_token');
+    localStorage.removeItem('brightloop_user');
+  }
+};
+
+// ==========================================
+// ERROR HELPER
+// ==========================================
+export const getApiError = (err) => {
+  if (!err) return 'An unknown error occurred.';
+  // Axios error with a response body
+  if (err.response?.data) {
+    const data = err.response.data;
+    if (typeof data === 'string') return data;
+    if (data.detail) return data.detail;
+    if (data.non_field_errors) return data.non_field_errors.join(' ');
+    // Return first field error
+    const firstKey = Object.keys(data)[0];
+    if (firstKey) {
+      const val = data[firstKey];
+      return `${firstKey}: ${Array.isArray(val) ? val.join(' ') : val}`;
+    }
+  }
+  if (err.message) return err.message;
+  return 'An unexpected error occurred.';
+};
+
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -32,7 +87,7 @@ const apiClient = axios.create({
 // Interceptor to attach JWT / DRF token
 apiClient.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('brightloop_token');
+    const token = tokenStorage.getAccess() || localStorage.getItem('brightloop_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -46,8 +101,7 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      // Clear token if expired
-      localStorage.removeItem('brightloop_token');
+      tokenStorage.clear();
     }
     return Promise.reject(error);
   }
@@ -60,57 +114,81 @@ const mockDelay = (ms = 250) => new Promise((resolve) => setTimeout(resolve, ms)
 // 1. AUTHENTICATION SERVICE
 // ==========================================
 export const authApi = {
+  /**
+   * Login — returns the user object (same shape as /accounts/me/).
+   * Also persists tokens via tokenStorage.
+   */
   login: async (credentials) => {
     if (ALWAYS_USE_MOCK) {
       await mockDelay(300);
       const isAdmin = credentials.email?.toLowerCase().includes('admin');
-      const user = isAdmin ? MOCK_ADMIN_USER : { ...MOCK_CURRENT_CUSTOMER, email: credentials.email || MOCK_CURRENT_CUSTOMER.email };
-      const token = 'mock_jwt_token_' + Date.now();
-      localStorage.setItem('brightloop_token', token);
-      localStorage.setItem('brightloop_user', JSON.stringify(user));
-      return { token, user };
+      const user = isAdmin
+        ? MOCK_ADMIN_USER
+        : { ...MOCK_CURRENT_CUSTOMER, email: credentials.email || MOCK_CURRENT_CUSTOMER.email };
+      const access = 'mock_access_' + Date.now();
+      const refresh = 'mock_refresh_' + Date.now();
+      tokenStorage.set(access, refresh, user);
+      return user;
     }
-    const response = await apiClient.post('/auth/login/', credentials);
-    return response.data;
+    // Real backend: POST /api/accounts/login/ → { access, refresh }
+    const { data } = await apiClient.post('/accounts/login/', credentials);
+    tokenStorage.set(data.access, data.refresh, null);
+    // Fetch the authenticated user profile
+    const me = await authApi.getMe();
+    tokenStorage.set(data.access, data.refresh, me);
+    return me;
   },
 
+  /**
+   * Fetch the current authenticated user from /api/accounts/me/
+   */
+  getMe: async () => {
+    if (ALWAYS_USE_MOCK) {
+      await mockDelay(100);
+      return tokenStorage.getUser() || MOCK_ADMIN_USER;
+    }
+    const { data } = await apiClient.get('/accounts/me/');
+    return data;
+  },
+
+  /**
+   * PATCH /api/accounts/me/ — update profile fields
+   */
+  updateMe: async (updates) => {
+    if (ALWAYS_USE_MOCK) {
+      await mockDelay(200);
+      const current = tokenStorage.getUser() || {};
+      const updated = { ...current, ...updates };
+      tokenStorage.set(tokenStorage.getAccess(), tokenStorage.getRefresh(), updated);
+      return updated;
+    }
+    const { data } = await apiClient.patch('/accounts/me/', updates);
+    return data;
+  },
+
+  /**
+   * Register — POST /api/accounts/register/
+   * Does NOT auto-login; caller navigates to /auth/login after.
+   */
   register: async (userData) => {
     if (ALWAYS_USE_MOCK) {
       await mockDelay(350);
-      const newUser = {
+      // Mock: just return a success payload without setting tokens
+      return {
         id: 'cust-' + Date.now(),
-        name: userData.name || `${userData.firstName} ${userData.lastName}`,
         email: userData.email,
-        company: userData.company || 'New Venture',
-        role: 'customer',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        activeSubscriptionsCount: 0,
-        totalSpent: 0
+        first_name: userData.first_name || '',
+        last_name: userData.last_name || '',
+        role: 'customer'
       };
-      const token = 'mock_jwt_token_' + Date.now();
-      localStorage.setItem('brightloop_token', token);
-      localStorage.setItem('brightloop_user', JSON.stringify(newUser));
-      return { token, user: newUser };
     }
-    const response = await apiClient.post('/auth/register/', userData);
-    return response.data;
+    const { data } = await apiClient.post('/accounts/register/', userData);
+    return data;
   },
 
-  getCurrentUser: async () => {
-    const saved = localStorage.getItem('brightloop_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // ignore parse error
-      }
-    }
-    return MOCK_ADMIN_USER;
-  },
-
-  logout: async () => {
-    localStorage.removeItem('brightloop_token');
-    localStorage.removeItem('brightloop_user');
+  /** Clear tokens and redirect-safe logout */
+  logout: () => {
+    tokenStorage.clear();
   }
 };
 
@@ -385,19 +463,22 @@ export const invoicesApi = {
     }
   },
 
-  payInvoice: async (invoiceId) => {
+  /** Mark an invoice as paid — aliased as both pay() and payInvoice() */
+  pay: async (invoiceId) => {
     if (ALWAYS_USE_MOCK) {
       await mockDelay(300);
       const inv = MOCK_INVOICES.find((i) => i.id === invoiceId);
       if (inv) {
-        inv.status = 'Paid';
-        inv.paidAt = new Date().toLocaleString();
+        inv.status = 'paid';
+        inv.paid_at = new Date().toISOString();
       }
       return inv;
     }
     const response = await apiClient.post(`/billing/invoices/${invoiceId}/pay/`);
     return response.data;
-  }
+  },
+
+  payInvoice: async (invoiceId) => invoicesApi.pay(invoiceId)
 };
 
 // ==========================================

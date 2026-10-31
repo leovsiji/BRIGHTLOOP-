@@ -1,86 +1,129 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { authApi } from '../services/api';
-import { MOCK_ADMIN_USER, MOCK_CURRENT_CUSTOMER } from '../services/mockData';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { authApi, tokenStorage } from '../services/api';
 
 const AuthContext = createContext(null);
 
-// Lazy initializer helpers — run once at component mount, not on every render
-const getInitialUser = () => {
-  const savedUser = localStorage.getItem('brightloop_user');
-  if (savedUser) {
-    try { return JSON.parse(savedUser); } catch { /* ignore */ }
-  }
-  return MOCK_ADMIN_USER;
-};
-
-const getInitialRole = () => {
-  const savedUser = localStorage.getItem('brightloop_user');
-  if (savedUser) {
-    try { return JSON.parse(savedUser)?.role || 'admin'; } catch { /* ignore */ }
-  }
-  return 'admin';
-};
-
-const getInitialToken = () => {
-  return localStorage.getItem('brightloop_token') || 'mock_session_active';
-};
-
+/**
+ * AuthProvider
+ *
+ * Uses real JWT authentication via the Django REST Framework backend.
+ *
+ * `role` is the currently displayed role (can be switched locally for
+ * demo/admin purposes). `actualRole` is always the real role from the
+ * JWT token and is used for security decisions.
+ *
+ * `switchRole` is a local UI helper that lets an admin browse the
+ * customer portal view. It does NOT change backend permissions.
+ */
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(getInitialUser);
-  const [role, setRole] = useState(getInitialRole);
-  const [token, setToken] = useState(getInitialToken);
-  const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState(() => tokenStorage.getUser());
+  const [token, setToken] = useState(() => tokenStorage.getAccess());
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Local-only role override for UI navigation (admin can browse customer view)
+  const [viewRole, setViewRole] = useState(() => tokenStorage.getUser()?.role || null);
+
+  // On mount, verify the stored token is still valid
+  useEffect(() => {
+    const verify = async () => {
+      if (!tokenStorage.getAccess()) {
+        setIsLoading(false);
+        return;
+      }
+      try {
+        const me = await authApi.getMe();
+        setUser(me);
+        setViewRole(me.role);
+        tokenStorage.set(tokenStorage.getAccess(), tokenStorage.getRefresh(), me);
+      } catch {
+        // Token invalid / expired (interceptor handles refresh).
+        // If refresh also fails the interceptor redirects to /auth/login.
+        setUser(null);
+        setToken(null);
+        setViewRole(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    verify();
+  }, []);
+
+  /**
+   * Login — POST /api/accounts/login/ → GET /api/accounts/me/
+   * Returns the user object from /me/
+   */
   const login = useCallback(async (credentials) => {
     setIsLoading(true);
     try {
-      const { token: receivedToken, user: receivedUser } = await authApi.login(credentials);
-      setUser(receivedUser);
-      setRole(receivedUser.role || 'admin');
-      setToken(receivedToken);
-      return receivedUser;
+      const me = await authApi.login(credentials);
+      setUser(me);
+      setToken(tokenStorage.getAccess());
+      setViewRole(me.role);
+      return me;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const register = useCallback(async (userData) => {
+  /**
+   * Register — POST /api/accounts/register/
+   * Fields: email, password, first_name, last_name, company_name (optional)
+   * Does NOT auto-login — caller navigates to /auth/login after.
+   */
+  const register = useCallback(async (data) => {
     setIsLoading(true);
     try {
-      const { token: receivedToken, user: receivedUser } = await authApi.register(userData);
-      setUser(receivedUser);
-      setRole('customer');
-      setToken(receivedToken);
-      return receivedUser;
+      return await authApi.register(data);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const logout = useCallback(async () => {
-    await authApi.logout();
-    setUser(null);
-    setToken(null);
-    setRole('customer');
+  /**
+   * updateProfile — PATCH /api/accounts/me/
+   */
+  const updateProfile = useCallback(async (updates) => {
+    const updated = await authApi.updateMe(updates);
+    setUser(updated);
+    tokenStorage.set(tokenStorage.getAccess(), tokenStorage.getRefresh(), updated);
+    return updated;
   }, []);
 
-  // Helper to switch between Admin & Customer personas
-  const switchRole = useCallback((newRole) => {
-    if (newRole === 'admin') {
-      setUser(MOCK_ADMIN_USER);
-      setRole('admin');
-      localStorage.setItem('brightloop_user', JSON.stringify(MOCK_ADMIN_USER));
-    } else {
-      setUser(MOCK_CURRENT_CUSTOMER);
-      setRole('customer');
-      localStorage.setItem('brightloop_user', JSON.stringify(MOCK_CURRENT_CUSTOMER));
-    }
+  const logout = useCallback(() => {
+    authApi.logout();
+    setUser(null);
+    setToken(null);
+    setViewRole(null);
   }, []);
+
+  /**
+   * switchRole — local UI view toggle only.
+   * Allows an admin to browse the customer portal UI.
+   * Does NOT change backend permissions or JWT claims.
+   */
+  const switchRole = useCallback((newRole) => {
+    setViewRole(newRole);
+  }, []);
+
+  // The actual role from the JWT (used for security/access control)
+  const actualRole = user?.role || null;
+
+  // The displayed role (can be toggled locally by switchRole)
+  const role = viewRole || actualRole;
+
+  // User display name — backend returns first_name + last_name
+  const displayUser = user
+    ? {
+        ...user,
+        name: [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email,
+      }
+    : null;
 
   return (
     <AuthContext.Provider
       value={{
-        user,
+        user: displayUser,
+        actualRole,
         role,
         token,
         isAuthenticated: Boolean(token),
@@ -88,7 +131,8 @@ export const AuthProvider = ({ children }) => {
         login,
         register,
         logout,
-        switchRole
+        updateProfile,
+        switchRole,
       }}
     >
       {children}
@@ -97,9 +141,7 @@ export const AuthProvider = ({ children }) => {
 };
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
+  return ctx;
 };
